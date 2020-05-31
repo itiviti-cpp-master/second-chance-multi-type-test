@@ -311,24 +311,24 @@ TYPED_TEST(DifferentSizesTest, create_many__destroy_some_whole_sets__recreate_so
             group.push_back(this->create(j));
         }
     }
-    std::size_t deleted = 0;
+    std::vector<std::vector<std::size_t>> deleted;
     for (std::size_t i = 0; i < ptrs.size(); ++i) {
         if (i % 2 == 0) {
             auto & group = ptrs[i];
+            auto & deleted_group = deleted.emplace_back();
             for (std::size_t j = 0; j < group.size(); ++j) {
                 CHECK(j, group[j]) << " for " << i << " group [" << j << "]";
                 this->destroy(j, group[j]);
+                deleted_group.push_back(j);
             }
             group.clear();
-            ++deleted;
         }
     }
-    while (deleted > 0) {
+    for (const auto & deleted_group : deleted) {
         auto & group = ptrs.emplace_back();
-        for (std::size_t i = 0; i < this->SizeCount; ++i) {
-            group.push_back(this->create(i));
+        for (const auto j : deleted_group) {
+            group.push_back(this->create(j));
         }
-        --deleted;
     }
     for (const auto & group : ptrs) {
         for (std::size_t i = 0; i < group.size(); ++i) {
