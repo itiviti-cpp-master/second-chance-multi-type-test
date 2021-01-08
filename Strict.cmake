@@ -5,11 +5,13 @@ set(CMAKE_CONFIGURATION_TYPES "ASAN;MSAN;USAN" CACHE STRING "" FORCE)
 set(COMPILE_OPTS -Wall -Wextra -Werror -pedantic -pedantic-errors)
 set(LINK_OPTS "")
 
+set(SANITIZE OFF)
 # Sanitizers options
 if (CMAKE_BUILD_TYPE MATCHES ASAN)
     list(APPEND COMPILE_OPTS -fsanitize=address -fno-omit-frame-pointer
         -fno-sanitize-recover=all)
     list(APPEND LINK_OPTS -fsanitize=address)
+    set(SANITIZE ON)
 endif()
 if (CMAKE_BUILD_TYPE MATCHES MSAN)
     list(APPEND COMPILE_OPTS -fsanitize=memory
@@ -17,6 +19,7 @@ if (CMAKE_BUILD_TYPE MATCHES MSAN)
         -fno-sanitize-recover=all)
     list(APPEND LINK_OPTS -fsanitize=memory
         -fsanitize-memory-track-origins=2)
+    set(SANITIZE ON)
 endif()
 if (CMAKE_BUILD_TYPE MATCHES USAN)
     list(APPEND COMPILE_OPTS
@@ -25,4 +28,8 @@ if (CMAKE_BUILD_TYPE MATCHES USAN)
         -fsanitize-recover=alignment)
     list(APPEND LINK_OPTS
         -fsanitize=undefined,float-cast-overflow,float-divide-by-zero)
+    set(SANITIZE ON)
+endif()
+if (SANITIZE)
+    add_compile_definitions(SANITIZE)
 endif()

@@ -6,6 +6,14 @@ set(ROOT_INCLUDES ${PROJECT_SOURCE_DIR}/include)
 set(PROJECT_NAME second-chance-multi-type-test)
 project(${PROJECT_NAME})
 
+if (NOT SANITIZE)
+# Jemalloc
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET jemalloc)
+
+include_directories(${JEMALLOC_INCLUDE_DIRS})
+endif()
+
 # Inlcude directories
 include_directories(${ROOT_INCLUDES})
 
@@ -22,3 +30,6 @@ target_link_libraries(runUnitTests gtest gtest_main)
 
 # Extra linking for the project
 target_link_libraries(runUnitTests second_chance_multi_type_lib)
+if (NOT SANITIZE)
+target_link_libraries(runUnitTests PkgConfig::JEMALLOC)
+endif()

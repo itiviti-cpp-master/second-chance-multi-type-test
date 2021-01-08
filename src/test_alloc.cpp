@@ -2,14 +2,22 @@
 
 #include <gtest/gtest.h>
 
+#ifndef SANITIZE
+#include <jemalloc/jemalloc.h>
+#endif
+
+#include <algorithm>
 #include <array>
 #include <iomanip>
 #include <memory>
+#include <new>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <tuple>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -88,6 +96,7 @@ struct Dummy
 
     ~Dummy()
     {
+        data.fill(0);
         --population;
     }
 };
@@ -118,9 +127,12 @@ struct DifferentSizesTest;
 template <template <class...> class L, class... Ts>
 struct DifferentSizesTest<L<Ts...>> : ::testing::Test
 {
-    static constexpr std::size_t N = 41;
+    static constexpr std::size_t TotalLowerCount = 41;
+    static constexpr std::size_t N = TotalLowerCount * std::max({sizeof(Ts)...});
+    static constexpr std::size_t TotalUpperCount = N / std::min({sizeof(Ts)...});
 
     static constexpr std::size_t SizeCount = sizeof...(Ts);
+    static constexpr std::array<std::size_t, SizeCount> Capacities = { (N / sizeof(Ts))... };
 
     static void reset()
     {
@@ -239,32 +251,31 @@ TYPED_TEST(DifferentSizesTest, create_and_destroy)
 {
     this->reset();
     std::vector<const void *> ptrs;
-    ptrs.reserve(this->N);
-    for (std::size_t i = 0; i < this->N; ) {
-        for (std::size_t j = 0; i < this->N && j < this->SizeCount; ++j, ++i) {
-            ptrs.push_back(this->create(j));
+    ptrs.reserve(this->TotalUpperCount * this->SizeCount);
+    for (std::size_t i = 0; i < this->SizeCount; ++i) {
+        for (std::size_t j = 0; j < this->Capacities[i]; ++j) {
+            ptrs.push_back(this->create(i));
         }
     }
-    std::size_t j = 0;
-    for (std::size_t i = 0; i < ptrs.size(); ++i) {
-        CHECK(j, ptrs[i]) << " for " << i << " element [" << j << "]";
-        this->destroy(j, ptrs[i]);
-        ++j;
-        if (j == this->SizeCount) {
-            j = 0;
+    std::size_t k = 0;
+    for (std::size_t i = 0; i < this->SizeCount; ++i) {
+        for (std::size_t j = 0; j < this->Capacities[i]; ++j) {
+            CHECK(i, ptrs[k]) << " for " << k << " element [" << i << "]";
+            this->destroy(i, ptrs[k]);
+            ++k;
         }
     }
-    EXPECT_TRUE(this->balanced());
+    EXPECT_TRUE(this->balanced()) << this->print_balance();
 }
 
 TYPED_TEST(DifferentSizesTest, create__destroy_mixed__recreate_by_size_order)
 {
     this->reset();
     std::vector<std::pair<const void *, std::size_t>> ptrs;
-    ptrs.reserve(this->N);
-    for (std::size_t i = 0; i < this->N; ) {
-        for (std::size_t j = 0; i < this->N && j < this->SizeCount; ++j, ++i) {
-            ptrs.emplace_back(this->create(j), j);
+    ptrs.reserve(this->TotalUpperCount * this->SizeCount);
+    for (std::size_t i = 0; i < this->SizeCount; ++i) {
+        for (std::size_t j = 0; j < this->Capacities[i]; ++j) {
+            ptrs.emplace_back(this->create(i), i);
         }
     }
 
@@ -284,6 +295,7 @@ TYPED_TEST(DifferentSizesTest, create__destroy_mixed__recreate_by_size_order)
         for (const auto count : delete_counts) {
             for (std::size_t i = 0; i < count; ++i) {
                 ptrs.emplace_back(this->create(j), j);
+                CHECK(j, ptrs.back().first) << " for " << (ptrs.size()-1) << " element [" << j << "]";
             }
             ++j;
         }
@@ -299,15 +311,39 @@ TYPED_TEST(DifferentSizesTest, create__destroy_mixed__recreate_by_size_order)
     EXPECT_TRUE(this->balanced()) << this->print_balance();
 }
 
+TYPED_TEST(DifferentSizesTest, out_of_memory)
+{
+    this->reset();
+    std::vector<const void *> ptrs;
+    ptrs.reserve(this->TotalUpperCount * this->SizeCount);
+    for (std::size_t i = 0; i < this->SizeCount; ++i) {
+        for (std::size_t j = 0; j < this->Capacities[i]; ++j) {
+            ptrs.push_back(this->create(i));
+        }
+        EXPECT_THROW({
+                    this->create(i);
+                }, std::bad_alloc);
+    }
+    std::size_t k = 0;
+    for (std::size_t i = 0; i < this->SizeCount; ++i) {
+        for (std::size_t j = 0; j < this->Capacities[i]; ++j) {
+            CHECK(i, ptrs[k]) << " for " << k << " element [" << i << "]";
+            this->destroy(i, ptrs[k]);
+            ++k;
+        }
+    }
+    EXPECT_TRUE(this->balanced()) << this->print_balance();
+}
+
 TYPED_TEST(DifferentSizesTest, create_many__destroy_some_whole_sets__recreate_some)
 {
     this->reset();
     std::vector<std::vector<const void *>> ptrs;
-    ptrs.reserve(this->N);
-    for (std::size_t i = 0; i < this->N; ) {
+    ptrs.reserve(this->TotalLowerCount * 2);
+    for (std::size_t i = 0; i < this->TotalLowerCount; ++i) {
         auto & group = ptrs.emplace_back();
         group.reserve(this->SizeCount);
-        for (std::size_t j = 0; i < this->N && j < this->SizeCount; ++j, ++i) {
+        for (std::size_t j = 0; j < this->SizeCount; ++j) {
             group.push_back(this->create(j));
         }
     }
@@ -336,16 +372,16 @@ TYPED_TEST(DifferentSizesTest, create_many__destroy_some_whole_sets__recreate_so
             this->destroy(i, group[i]);
         }
     }
-    EXPECT_TRUE(this->balanced());
+    EXPECT_TRUE(this->balanced()) << this->print_balance();
 }
 
 TYPED_TEST(DifferentSizesTest, create_many__destroy_by_size__recreate_in_reverse_order)
 {
     this->reset();
     std::vector<std::vector<const void *>> ptrs(this->SizeCount);
-    for (std::size_t i = 0; i < this->N; ) {
-        for (std::size_t j = 0; i < this->N && j < this->SizeCount; ++j, ++i) {
-            ptrs[j].push_back(this->create(j));
+    for (std::size_t i = 0; i < this->SizeCount; ++i) {
+        for (std::size_t j = 0; j < this->Capacities[i]; ++j) {
+            ptrs[i].push_back(this->create(i));
         }
     }
 
@@ -382,22 +418,18 @@ TYPED_TEST(DifferentSizesTest, create_many__destroy_by_size__recreate_in_reverse
             this->destroy(j, ptrs[j][i]);
         }
     }
-    EXPECT_TRUE(this->balanced());
+    EXPECT_TRUE(this->balanced()) << this->print_balance();
 }
 
 TYPED_TEST(DifferentSizesTest, create_by_size__delete_some_in_reverse_size_order__recreate_some)
 {
     this->reset();
     std::vector<std::pair<const void *, std::size_t>> ptrs;
-    ptrs.reserve(this->N);
-    const std::size_t part = this->N / this->SizeCount;
+    ptrs.reserve(this->TotalUpperCount * this->SizeCount);
     for (std::size_t j = this->SizeCount; j > 0; --j) {
-        for (std::size_t i = 0; i < part; ++i) {
+        for (std::size_t i = 0; i < this->Capacities[j-1]; ++i) {
             ptrs.emplace_back(this->create(j-1), j-1);
         }
-    }
-    while (ptrs.size() < this->N) {
-        ptrs.emplace_back(this->create(this->SizeCount-1), this->SizeCount-1);
     }
 
     std::vector<std::size_t> delete_counts(this->SizeCount, 0);
@@ -422,5 +454,131 @@ TYPED_TEST(DifferentSizesTest, create_by_size__delete_some_in_reverse_size_order
             this->destroy(j, ptr);
         }
     }
-    EXPECT_TRUE(this->balanced());
+    EXPECT_TRUE(this->balanced()) << this->print_balance();
 }
+
+TYPED_TEST(DifferentSizesTest, mixed_usage)
+{
+    this->reset();
+    std::vector<std::pair<const void *, std::size_t>> ptrs;
+    ptrs.reserve(this->TotalUpperCount * this->SizeCount * 3);
+    std::vector<std::size_t> created(this->SizeCount, 0);
+    for (std::size_t i = 0; i < this->SizeCount; ++i) {
+        for (std::size_t j = 0; j < 2 * this->Capacities[i] / 3; ++j) {
+            ptrs.emplace_back(this->create(i), i);
+            ++created[i];
+        }
+    }
+
+    auto odd = std::max<std::size_t>(this->SizeCount - 1, 2);
+    for (std::size_t i = 0; i < ptrs.size(); i += odd) {
+        const auto [ptr, j] = ptrs[i];
+        this->destroy(j, ptr);
+        ptrs[i].first = nullptr;
+        --created[j];
+    }
+
+    auto added = ptrs.size() * 2 / 3;
+    for (std::size_t i = 0; i < added; ++i) {
+        const auto [ptr, j] = ptrs[i];
+        if (created[j] < this->Capacities[j]) {
+            ptrs.emplace_back(this->create(j), j);
+            ++created[j];
+        }
+    }
+
+    --odd;
+    for (std::size_t i = 0; i < ptrs.size(); i += odd) {
+        const auto [ptr, j] = ptrs[i];
+        if (ptr != nullptr) {
+            this->destroy(j, ptr);
+            ptrs[i].first = nullptr;
+            --created[j];
+        }
+    }
+
+    added = ptrs.size() * 2 / 3;
+    for (std::size_t i = 0; i < added; ++i) {
+        const auto [ptr, j] = ptrs[i];
+        if (created[j] < this->Capacities[j]) {
+            ptrs.emplace_back(this->create(j), j);
+            ++created[j];
+        }
+    }
+
+    for (std::size_t i = 0; i < ptrs.size(); ++i) {
+        const auto [ptr, j] = ptrs[i];
+        if (ptr != nullptr) {
+            CHECK(j, ptr) << " for " << i << " element [" << j << "]";
+            this->destroy(j, ptr);
+        }
+    }
+    EXPECT_TRUE(this->balanced()) << this->print_balance();
+}
+
+#ifndef SANITIZE
+namespace {
+
+std::size_t get_current_size()
+{
+    std::size_t sz = 0;
+    EXPECT_EQ(0, mallctl("thread.tcache.flush", nullptr, nullptr, nullptr, 0));
+    std::uint64_t epoch = 1;
+    sz = sizeof(epoch);
+    EXPECT_EQ(0, mallctl("epoch", &epoch, &sz, &epoch, sz));
+    std::size_t allocated = 0;
+    sz = sizeof(allocated);
+    EXPECT_EQ(0, mallctl("stats.allocated", &allocated, &sz, nullptr, 0));
+    return allocated;
+}
+
+template <class C>
+auto make_counts(const std::size_t block_size, const C & sizes)
+{
+    std::vector<std::size_t> counts;
+    counts.reserve(sizes.size());
+    for (const auto s : sizes) {
+        counts.push_back(block_size / s);
+    }
+    return counts;
+}
+
+} // anonymous namespace
+
+TEST(MemoryRequirements, single_type)
+{
+    const std::size_t BlockSize = 4096;
+    const std::size_t S = 10;
+    const std::size_t Count = BlockSize / S;
+    std::size_t before = get_current_size(), created = 0, after = 0;
+    PoolAllocator pool(BlockSize, {S});
+    created = get_current_size();
+    for (std::size_t i = 0; i < Count; ++i) {
+        pool.allocate(S);
+    }
+    after = get_current_size();
+    EXPECT_GE(created, after);
+    EXPECT_GE(10 * sizeof(void *), (created - before - BlockSize) / Count);
+}
+
+TEST(MemoryRequirements, multi_type)
+{
+    const std::size_t BlockSize = 4096;
+    const std::initializer_list<std::size_t> Sizes = { 3, 10, 40, 256 };
+    const std::vector<std::size_t> Counts = make_counts(BlockSize, Sizes);
+    const std::size_t TotalCount = std::accumulate(Counts.begin(), Counts.end(), 0);
+    std::size_t before = get_current_size(), created = 0, after = 0;
+    PoolAllocator pool(BlockSize, Sizes);
+    created = get_current_size();
+    std::size_t j = 0;
+    for (const auto size : Sizes) {
+        for (std::size_t i = 0; i < Counts[j]; ++i) {
+            pool.allocate(size);
+        }
+        ++j;
+    }
+    after = get_current_size();
+    EXPECT_GE(created, after);
+    EXPECT_GE(10 * sizeof(void *), (created - before - BlockSize) / TotalCount);
+}
+#endif
