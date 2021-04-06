@@ -30,9 +30,6 @@ if (CMAKE_BUILD_TYPE MATCHES USAN)
         -fsanitize=undefined,float-cast-overflow,float-divide-by-zero)
     set(SANITIZE ON)
 endif()
-if (SANITIZE)
-    add_compile_definitions(SANITIZE)
-endif()
 
 # Configure clang-tidy
 if (${USE_CLANG_TIDY})

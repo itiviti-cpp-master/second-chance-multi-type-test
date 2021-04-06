@@ -7,11 +7,11 @@ set(PROJECT_NAME second-chance-multi-type-test)
 project(${PROJECT_NAME})
 
 if (NOT SANITIZE)
-# Jemalloc
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET jemalloc)
-
-include_directories(${JEMALLOC_INCLUDE_DIRS})
+    # Jemalloc
+    find_package(PkgConfig)
+    if (PKG_CONFIG_FOUND)
+        pkg_check_modules(JEMALLOC IMPORTED_TARGET jemalloc)
+    endif()
 endif()
 
 # Inlcude directories
@@ -22,7 +22,7 @@ file(GLOB SRC_FILES ${PROJECT_SOURCE_DIR}/src/*.cpp)
 
 # Unit tests
 add_executable(runUnitTests ${SRC_FILES})
-target_compile_options(runUnitTests PRIVATE ${COMPILE_OPTS} -O1 -Wno-gnu-zero-variadic-macro-arguments)
+target_compile_options(runUnitTests PRIVATE ${COMPILE_OPTS} -O1 -Wno-gnu-zero-variadic-macro-arguments -Wno-unused-function)
 target_link_options(runUnitTests PRIVATE ${LINK_OPTS})
 
 # Standard linking to gtest stuff
@@ -30,6 +30,10 @@ target_link_libraries(runUnitTests gtest gtest_main)
 
 # Extra linking for the project
 target_link_libraries(runUnitTests second_chance_multi_type_lib)
-if (NOT SANITIZE)
-target_link_libraries(runUnitTests PkgConfig::JEMALLOC)
+
+# Jemalloc
+if (JEMALLOC_FOUND)
+    target_compile_definitions(runUnitTests PRIVATE JEMALLOC)
+    target_include_directories(runUnitTests PRIVATE ${JEMALLOC_INCLUDE_DIRS})
+    target_link_libraries(runUnitTests PkgConfig::JEMALLOC)
 endif()
