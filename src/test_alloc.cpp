@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#ifndef SANITIZE
+#ifdef JEMALLOC
 #include <jemalloc/jemalloc.h>
 #endif
 
@@ -516,7 +516,7 @@ TYPED_TEST(DifferentSizesTest, mixed_usage)
     EXPECT_TRUE(this->balanced()) << this->print_balance();
 }
 
-#ifndef SANITIZE
+#ifdef JEMALLOC
 namespace {
 
 std::size_t get_current_size()
